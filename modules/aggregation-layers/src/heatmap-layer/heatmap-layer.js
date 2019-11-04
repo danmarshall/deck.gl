@@ -341,7 +341,6 @@ export default class HeatmapLayer extends CompositeLayer {
 
   // Computes world bounds area that needs to be processed for generate heatmap
   _updateBounds(forceUpdate = false) {
-    const {textureSize} = this.state;
     const {viewport} = this.context;
 
     // Unproject all 4 corners of the current screen coordinates into world coordinates (lng/lat)
@@ -355,8 +354,6 @@ export default class HeatmapLayer extends CompositeLayer {
 
     // #1: get world bounds for current viewport extends
     const visibleWorldBounds = getBounds(viewportCorners); // TODO: Change to visible bounds
-    // #2 : convert world bounds to common (Flat) bounds
-    const visibleCommonBounds = this._worldToCommonBounds(visibleWorldBounds);
 
     const newState = {visibleWorldBounds, viewportCorners};
     let boundsChanged = false;
@@ -366,12 +363,9 @@ export default class HeatmapLayer extends CompositeLayer {
       !this.state.worldBounds ||
       !boundsContain(this.state.worldBounds, visibleWorldBounds)
     ) {
-      // #3: extend common bounds to match aspect ratio with viewport
-      const scaledCommonBounds = scaleToAspectRatio(
-        visibleCommonBounds,
-        textureSize * RESOLUTION,
-        textureSize * RESOLUTION
-      );
+      // #2 : convert world bounds to common (Flat) bounds
+      // #3 : extend common bounds to match aspect ratio with viewport
+      const scaledCommonBounds = this._worldToCommonBounds(visibleWorldBounds);
 
       // #4 :convert aligned common bounds to world bounds
       const worldBounds = this._commonToWorldBounds(scaledCommonBounds);
@@ -385,12 +379,7 @@ export default class HeatmapLayer extends CompositeLayer {
       }
 
       // #5: now convert world bounds to common using Layer's coordiante system and origin
-      const normalizedCommonBounds = this._worldToCommonBounds(worldBounds, {
-        scaleToAspect: true,
-        normalize: true,
-        width: textureSize * RESOLUTION,
-        height: textureSize * RESOLUTION
-      });
+      const normalizedCommonBounds = this._worldToCommonBounds(worldBounds);
 
       newState.worldBounds = worldBounds;
       newState.normalizedCommonBounds = normalizedCommonBounds;
@@ -411,12 +400,11 @@ export default class HeatmapLayer extends CompositeLayer {
     } = this.state;
 
     const {viewport} = this.context;
-    const commonBounds = normalizedCommonBounds.map(x => x * viewport.scale);
 
     triPositionBuffer.subData(packVertices(viewportCorners, 3));
 
     const textureBounds = viewportCorners.map(p =>
-      getTextureCoordinates(viewport.projectPosition(p), commonBounds)
+      getTextureCoordinates(viewport.projectPosition(p), normalizedCommonBounds)
     );
     triTexCoordBuffer.subData(packVertices(textureBounds, 2));
   }
@@ -458,10 +446,7 @@ export default class HeatmapLayer extends CompositeLayer {
 
     // #5: convert world bounds to common using Layer's coordiante system and origin
     const commonBounds = this._worldToCommonBounds(worldBounds, {
-      useLayerCoordinateSystem: true,
-      scaleToAspect: true,
-      width: textureSize * RESOLUTION,
-      height: textureSize * RESOLUTION
+      useLayerCoordinateSystem: true
     });
 
     const uniforms = Object.assign({}, weightsTransform.model.getModuleUniforms(moduleParameters), {
@@ -521,11 +506,14 @@ export default class HeatmapLayer extends CompositeLayer {
 
   // input: worldBounds: [minLong, minLat, maxLong, maxLat]
   // input: opts.useLayerCoordinateSystem : layers coordiante system is used
-  // optput: commonBounds: [minX, minY, maxX, maxY]
+  // optput: commonBounds: [minX, minY, maxX, maxY] scaled to fit the current texture
   _worldToCommonBounds(worldBounds, opts = {}) {
-    const {useLayerCoordinateSystem = false, scaleToAspect = false, width, height} = opts;
+    const {useLayerCoordinateSystem = false} = opts;
     const [minLong, minLat, maxLong, maxLat] = worldBounds;
     const {viewport} = this.context;
+    const {textureSize} = this.state;
+
+    const size = (textureSize * RESOLUTION) / viewport.scale;
 
     let topLeftCommon;
     let bottomRightCommon;
@@ -540,12 +528,7 @@ export default class HeatmapLayer extends CompositeLayer {
     }
     // Ignore z component
     let commonBounds = topLeftCommon.slice(0, 2).concat(bottomRightCommon.slice(0, 2));
-    if (scaleToAspect) {
-      commonBounds = scaleToAspectRatio(commonBounds, width, height);
-    }
-    if (opts.normalize) {
-      commonBounds = commonBounds.map(x => x / viewport.scale);
-    }
+    commonBounds = scaleToAspectRatio(commonBounds, size, size);
     return commonBounds;
   }
 
@@ -554,8 +537,8 @@ export default class HeatmapLayer extends CompositeLayer {
   _commonToWorldBounds(commonBounds) {
     const [xMin, yMin, xMax, yMax] = commonBounds;
     const {viewport} = this.context;
-    const topLeftWorld = viewport.unprojectPosition([xMin, yMax]);
-    const bottomRightWorld = viewport.unprojectPosition([xMax, yMin]);
+    const topLeftWorld = viewport.unprojectPosition([xMin, yMin]);
+    const bottomRightWorld = viewport.unprojectPosition([xMax, yMax]);
 
     return topLeftWorld.slice(0, 2).concat(bottomRightWorld.slice(0, 2));
   }
